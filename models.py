@@ -27,7 +27,7 @@ device = 'cuda:0'
 
 
 
-class Attention(nn.Module):
+class DeepAttention(nn.Module):
     """
     Attention Network, used to help the decoder to focus on the most informative
     part of the sentence or the document at each step.
@@ -36,7 +36,7 @@ class Attention(nn.Module):
         """
         Arguments:
         ----------
-        input_dim: feature size of input images
+        dimension: feature size of input images
         attention_dim: size of the attention network
         """
         super(Attention, self).__init__()
@@ -61,6 +61,45 @@ class Attention(nn.Module):
         """
         attention = self.attention(input_sequence)                   # (batch_size, length_sequence, attention_dim)
         attention = self.full_att(self.relu(attention))              # (batch_size, length_sequence, 1)
+        weights = self.softmax(attention.squeeze(2))                 # (batch_size, length_sequence)
+
+        attention_weighted_encoding = (input_sequence * weights.unsqueeze(2)).sum(dim=1)  # (batch_size, dimension)
+
+        return attention_weighted_encoding
+
+
+
+class Attention(nn.Module):
+    """
+    Attention Network, used to help the decoder to focus on the most informative
+    part of the sentence or the document at each step.
+    """
+    def __init__(self, dimension):
+        """
+        Arguments:
+        ----------
+        dimension: feature size of input images
+        """
+        super(Attention, self).__init__()
+
+        self.attention = nn.Linear(dimension, 1)  # linear layer to transform the input
+        self.relu = nn.ReLU()
+        self.softmax = nn.Softmax(dim=1)          # softmax layer to calculate weights
+
+
+    def forward(self, input_sequence):
+        """
+        Forward propagation
+
+        Arguments:
+        ----------
+        input_sequence: output of the bi_gru, tensor of dimension (batch_size, length_sequence, dimension)
+        
+        Return: 
+        -------
+        attention weighted encoding: tensor of shape (batch, dimension)
+        """
+        attention = self.relu(self.attention(input_sequence))        # (batch_size, length_sequence, 1)
         weights = self.softmax(attention.squeeze(2))                 # (batch_size, length_sequence)
 
         attention_weighted_encoding = (input_sequence * weights.unsqueeze(2)).sum(dim=1)  # (batch_size, dimension)
@@ -97,14 +136,16 @@ class HAN(nn.Module):
 
         self.bi_gru1 = nn.GRU(input_size=self.embedding_dim, hidden_size=self.bi_gru_dim1,
                               bias=True, batch_first=True, bidirectional=True)
-        self.attention1 = Attention(2 * self.bi_gru_dim1, self.attention_dim1)
+        # self.attention1 = DeepAttention(2 * self.bi_gru_dim1, self.attention_dim1)
+        self.attention1 = Attention(2 * self.bi_gru_dim1)
 
         self.bi_gru2 = nn.GRU(input_size=2 * self.bi_gru_dim1, hidden_size=self.bi_gru_dim2,
                               bias=True, batch_first=True, bidirectional=True)
-        self.attention2 = Attention(2 * self.bi_gru_dim2, self.attention_dim2)
+        # self.attention2 = DeepAttention(2 * self.bi_gru_dim2, self.attention_dim2)
+        self.attention2 = Attention(2 * self.bi_gru_dim2)
 
         self.regressor = nn.Linear(2 * self.bi_gru_dim2, 1)
-        self.activation = nn.Sigmoid()
+        self.activation = nn.Tanh()
 
 
     def load_pretrained_embeddings(self, embeddings, fine_tune=True):
@@ -129,6 +170,8 @@ class HAN(nn.Module):
         documents: tensor of shape (batch, sentences, words)
         """
         n_documents = documents.size(0)
+        n_sentences = documents.size(1)
+        device = documents.device
 
         ## Embedding
         embeddings = self.embedding(documents)  # (batch, sentences, words, embedding_dim)
@@ -136,8 +179,8 @@ class HAN(nn.Module):
         ## Sentence level encoding
         attention_weighted_sentences = []
 
-        for doc in range(n_documents):
-            output, _ = self.bi_gru1(embeddings[doc])
+        for sentences in embeddings:
+            output, _ = self.bi_gru1(sentences)
             weighted_output = self.attention1(output)
             attention_weighted_sentences.append(weighted_output.unsqueeze(0))
 
@@ -151,6 +194,6 @@ class HAN(nn.Module):
 
         ## Final prediction
         out = self.regressor(attention_weighted_documents)
-        out = self.activation(out)
+        out = 2 * self.activation(out)
     
         return out

@@ -44,14 +44,14 @@ cudnn.benchmark = True
 
 
 
-BATCH_SIZE = 64
+BATCH_SIZE = 128
 TARGET_IDX = 0
 
 
 path_to_data = '../data/'
 
 # Loading data
-print('Loading data', end='...')
+print('Loading data...')
 docs = np.load(path_to_data + 'documents.npy')
 embeddings = np.load(path_to_data + 'embeddings.npy')
 
@@ -71,9 +71,6 @@ docs_train = torch.LongTensor(docs[train_idxs_new,:,:])
 docs_val = torch.LongTensor(docs[val_idxs,:,:])
 
 # Loading targets
-target_train = []
-target_val = []
-
 with open(path_to_data + 'targets/train/target_' + str(TARGET_IDX) + '.txt', 'r') as file:
     target = file.read().splitlines()
 
@@ -93,7 +90,8 @@ embeddings = torch.FloatTensor(embeddings)
 vocab_size = embeddings.size(0)
 embedding_dim = embeddings.size(1)
 
-print('done')
+print('    Training data: ', docs_train.size(), target_train.size())
+print('    Validation data: ', docs_val.size(), target_val.shape)
 
 
 
@@ -102,13 +100,15 @@ print('done')
 
 
 # Hyperparameters
-LEARNING_RATE = 1e-3
-DISPLAY_STEP = 100
+LEARNING_RATE = 5e-4
+DISPLAY_STEP = 50
 
-ATTENTION_DIM = [128, 128]
-BI_GRU_DIM = [128, 128]
+ATTENTION_DIM = [16, 16]
+BI_GRU_DIM = [64, 64]
 embedding_dim = 13
 DROPOUT = 0.3
+
+GRAD_CLIP = 3
 
 
 # Model
@@ -136,7 +136,7 @@ print('\n>> Learning {} parameters\n'.format(params))
 
 
 
-N_EPOCHS = 20
+N_EPOCHS = 10
 
 
 for epoch in range(N_EPOCHS):
@@ -154,14 +154,20 @@ for epoch in range(N_EPOCHS):
         # Forward pass
         output = net(documents)
 
-        # Compute loss
-        loss = criterion(output, target)
-
         # Delete previous gradients
         optimizer.zero_grad()
 
+        # Compute loss
+        loss = criterion(output, target)
+
         # Backpropagation
         loss.backward()
+
+        # Clipping to avoid exploding gradient
+        for group in optimizer.param_groups:
+            for param in group['params']:
+                if param.grad is not None:
+                    param.grad.data.clamp_(-GRAD_CLIP, GRAD_CLIP)
 
         # Take a optimizer step
         optimizer.step()
